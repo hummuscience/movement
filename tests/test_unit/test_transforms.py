@@ -47,35 +47,61 @@ def sample_data_3d() -> xr.DataArray:
     )
 
 
+def assert_attrs_equal(
+    actual: xr.DataArray,
+    expected: xr.DataArray,
+) -> None:
+    """Assert that the attributes of two DataArrays are equal."""
+    for key in actual.attrs:
+        if isinstance(actual.attrs[key], np.ndarray):
+            np.testing.assert_array_equal(
+                actual.attrs[key], expected.attrs[key]
+            )
+        else:
+            assert actual.attrs[key] == expected.attrs[key]
+
+
 @pytest.mark.parametrize(
     ["optional_arguments", "expected_output"],
     [
         pytest.param(
             {},
-            data_array_with_dims_and_coords(nparray_0_to_23()),
-            id="Do nothing",
+            data_array_with_dims_and_coords(
+                nparray_0_to_23(), scale_factor=np.ones(2)
+            ),
+            id="No scaling, just store scale_factor",
         ),
         pytest.param(
             {"space_unit": "elephants"},
             data_array_with_dims_and_coords(
-                nparray_0_to_23(), space_unit="elephants"
+                nparray_0_to_23(),
+                space_unit="elephants",
+                scale_factor=np.ones(2),
             ),
-            id="No scaling, add space_unit",
+            id="No scaling, add space_unit and scale_factor",
         ),
         pytest.param(
             {"factor": 2},
-            data_array_with_dims_and_coords(nparray_0_to_23() * 2),
+            data_array_with_dims_and_coords(
+                nparray_0_to_23() * 2,
+                scale_factor=np.array([2, 2]),
+            ),
             id="Double, no space_unit",
         ),
         pytest.param(
             {"factor": 0.5},
-            data_array_with_dims_and_coords(nparray_0_to_23() * 0.5),
+            data_array_with_dims_and_coords(
+                nparray_0_to_23() * 0.5,
+                scale_factor=np.array([0.5, 0.5]),
+            ),
             id="Halve, no space_unit",
         ),
         pytest.param(
             {"factor": 0.5, "space_unit": "elephants"},
             data_array_with_dims_and_coords(
-                nparray_0_to_23() * 0.5, space_unit="elephants"
+                nparray_0_to_23() * 0.5,
+                space_unit="elephants",
+                scale_factor=np.ones(2) * 0.5,
             ),
             id="Halve, add space_unit",
         ),
@@ -83,6 +109,7 @@ def sample_data_3d() -> xr.DataArray:
             {"factor": [0.5, 2]},
             data_array_with_dims_and_coords(
                 nparray_0_to_23() * [0.5, 2],
+                scale_factor=np.array([0.5, 2]),
             ),
             id="x / 2, y * 2",
         ),
@@ -90,6 +117,7 @@ def sample_data_3d() -> xr.DataArray:
             {"factor": np.array([0.5, 2]).reshape(1, 2)},
             data_array_with_dims_and_coords(
                 nparray_0_to_23() * [0.5, 2],
+                scale_factor=np.array([0.5, 2]),
             ),
             id="x / 2, y * 2, should squeeze to cast across space",
         ),
@@ -103,7 +131,7 @@ def test_scale(
     """Test scaling with different factors and space_units."""
     scaled_data = scale(sample_data_2d, **optional_arguments)
     xr.testing.assert_equal(scaled_data, expected_output)
-    assert scaled_data.attrs == expected_output.attrs
+    assert_attrs_equal(scaled_data, expected_output)
 
 
 @pytest.mark.parametrize(
@@ -136,6 +164,10 @@ def test_scale_space_dimension(dims: list[str], data_shape):
 
     assert scaled_data.shape == data.shape
     xr.testing.assert_equal(scaled_data, expected_output_data)
+    np.testing.assert_array_equal(
+        scaled_data.attrs["scale_factor"],
+        np.array(factor),
+    )
 
 
 @pytest.mark.parametrize(
@@ -145,23 +177,39 @@ def test_scale_space_dimension(dims: list[str], data_shape):
             {"factor": 2, "space_unit": "elephants"},
             {"factor": 0.5, "space_unit": "crabs"},
             data_array_with_dims_and_coords(
-                nparray_0_to_23(), space_unit="crabs"
+                nparray_0_to_23(),
+                space_unit="crabs",
+                scale_factor=np.ones(2),
             ),
             id="No net scaling, final crabs space_unit",
         ),
         pytest.param(
             {"factor": 2, "space_unit": "elephants"},
             {"factor": 0.5, "space_unit": None},
-            data_array_with_dims_and_coords(nparray_0_to_23()),
+            data_array_with_dims_and_coords(
+                nparray_0_to_23(),
+                scale_factor=np.ones(2),
+            ),
             id="No net scaling, no final space_unit",
         ),
         pytest.param(
             {"factor": 2, "space_unit": None},
             {"factor": 0.5, "space_unit": "elephants"},
             data_array_with_dims_and_coords(
-                nparray_0_to_23(), space_unit="elephants"
+                nparray_0_to_23(),
+                space_unit="elephants",
+                scale_factor=np.ones(2),
             ),
             id="No net scaling, final elephant space_unit",
+        ),
+        pytest.param(
+            {"factor": 2, "space_unit": None},
+            {"factor": 3.5, "space_unit": None},
+            data_array_with_dims_and_coords(
+                nparray_0_to_23() * 7,
+                scale_factor=np.ones(2) * 7,
+            ),
+            id="Net scaling by 7, no final space_unit",
         ),
     ],
 )
@@ -180,7 +228,7 @@ def test_scale_twice(
         **optional_arguments_2,
     )
     xr.testing.assert_equal(output_data_array, expected_output)
-    assert output_data_array.attrs == expected_output.attrs
+    assert_attrs_equal(output_data_array, expected_output)
 
 
 @pytest.mark.parametrize(
@@ -212,16 +260,47 @@ def test_scale_value_error(
 
 
 @pytest.mark.parametrize(
+    "invalid_factor, expected_error_message",
+    [
+        pytest.param(
+            np.ones((3, 3)),
+            "Expected existing 'scale_factor' to be 1D, found 2D instead.",
+            id="2D scale_factor",
+        ),
+        pytest.param(
+            np.ones(3),
+            "Existing scale_factor length does not match current "
+            "'space' dimension (3 != 2).",
+            id="space dimension mismatch",
+        ),
+    ],
+)
+def test_scale_with_invalid_scale_factor_in_attrs(
+    sample_data_2d: xr.DataArray,
+    invalid_factor: np.ndarray,
+    expected_error_message: str,
+):
+    """Test scaling with invalid scale_factor attribute."""
+    sample_data_2d.attrs["scale_factor"] = invalid_factor
+    with pytest.raises(ValueError) as error:
+        scale(sample_data_2d)
+    assert str(error.value) == expected_error_message
+
+
+@pytest.mark.parametrize(
     "factor", [2, [1, 2, 0.5]], ids=["uniform scaling", "multi-axis scaling"]
 )
 def test_scale_3d_space(factor, sample_data_3d: xr.DataArray):
     """Test scaling a DataArray with 3D space."""
     scaled_data = scale(sample_data_3d, factor=factor)
+    expected_factor = (np.ones(3) * np.array(factor)).squeeze()
     expected_output = data_array_with_dims_and_coords(
-        nparray_0_to_23().reshape(8, 3) * np.array(factor).reshape(1, -1),
+        nparray_0_to_23().reshape(8, 3) * expected_factor,
         coords=SPATIAL_COORDS_3D,
+        scale_factor=expected_factor,
     )
     xr.testing.assert_equal(scaled_data, expected_output)
+    assert_attrs_equal(scaled_data, expected_output)
 
 
 @pytest.mark.parametrize(
