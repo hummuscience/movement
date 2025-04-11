@@ -26,8 +26,8 @@ def scale(
         length of data array's space dimension along which it will be
         broadcasted.
     space_unit : str or None
-        The unit of the scaled data stored as a property in
-        xarray.DataArray.attrs['space_unit']. In case of the default (``None``)
+        The unit of the scaled data stored in the scaled array's attributes.
+        In case of the default (``None``)
         the ``space_unit`` attribute is dropped.
 
     Returns
@@ -38,9 +38,13 @@ def scale(
 
     Notes
     -----
-    When scale is used multiple times on the same xarray.DataArray,
-    the ``space_unit`` attribute is overwritten each time or is dropped
-    if ``None`` is passed by default or explicitly.
+    - If the scale function is applied multiple times to the same data array,
+      the ``space_unit`` attribute will be overwritten each time or removed
+      if ``space_unit`` is None.
+    - The ``scale_factor`` attribute is stored as a 1D numpy array with the
+      same length as the space dimension. If the input data already has a
+      ``scale_factor`` attribute, the new scaling factor is multiplied with
+      the existing one.
 
     This scaling factor is stored as the output array's ``scale_factor``
     attribute as a 1D array of the same length as the ``space``
