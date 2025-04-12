@@ -51,6 +51,31 @@ def scale(
     dimension. If the input data already has a ``scale_factor``
     attribute, the new scale factor is multiplied with the existing one.
 
+    Examples
+    --------
+    Let's imagine a camera viewing a 2D plane from the top, with an
+    estimated resolution of 10 pixels per cm. We can scale down
+    position data by a factor of 1/10 to express it in cm units.
+
+    >>> from movement.transforms import scale
+    >>> ds["position"] = scale(ds["position"], 1 / 10, space_unit="cm")
+    >>> print(ds["position"].attrs)
+    {'scale_factor': array([0.1, 0.1]), 'space_unit': 'cm'}
+
+    Note that the attributes of the scaled data array now contain the assigned
+    ``space_unit`` as well as the ``scale_factor``, which is stored as a 1D
+    numpy array, with one element per ``space`` coordinate (here x and y).
+
+    We can also scale the two spatial dimensions by different factors.
+
+    >>> ds["position"] = scale(ds["position"], [10, 20], space_unit=None)
+    >>> print(ds["position"].attrs)
+    {'scale_factor': array([1., 2.])}
+
+    The second scale operation removed the ``space_unit`` attribute, restored
+    the x axis to its original scale, and scaled up the y axis to twice its
+    original size.
+
     """
     space_len = data.sizes["space"]
     # Validate dimension names
