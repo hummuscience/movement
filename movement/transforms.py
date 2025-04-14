@@ -26,49 +26,124 @@ def scale(
         length of data array's space dimension along which it will be
         broadcasted.
     space_unit : str or None
-        The unit of the scaled data stored as a property in
-        xarray.DataArray.attrs['space_unit']. In case of the default (``None``)
+        The unit of the scaled data stored in the scaled array's attributes.
+        In case of the default (``None``)
         the ``space_unit`` attribute is dropped.
 
     Returns
     -------
     xarray.DataArray
-        The scaled data array.
+        The scaled data array with updated ``scale_factor`` and ``space_unit``
+        attributes.
 
     Notes
     -----
-    When scale is used multiple times on the same xarray.DataArray,
-    xarray.DataArray.attrs["space_unit"] is overwritten each time or is dropped
-    if ``None`` is passed by default or explicitly.
+    - If the scale function is applied multiple times to the same data array,
+      the ``space_unit`` attribute will be overwritten each time or removed
+      if ``space_unit`` is None.
+    - The ``scale_factor`` attribute is stored as a 1D numpy array with the
+      same length as the space dimension. If the input data already has a
+      ``scale_factor`` attribute, the new scaling factor is multiplied with
+      the existing one.
+
+    Examples
+    --------
+    Let's imagine a camera viewing a 2D plane from the top, with an
+    estimated resolution of 10 pixels per cm. We can scale down
+    position data by a factor of 1/10 to express it in cm units.
+
+    >>> from movement.transforms import scale
+    >>> ds["position"] = scale(ds["position"], 1 / 10, space_unit="cm")
+    >>> print(ds["position"].attrs)
+    {'scale_factor': array([0.1, 0.1]), 'space_unit': 'cm'}
+
+    Note that the attributes of the scaled data array now contain the assigned
+    ``space_unit`` as well as the ``scale_factor``, which is stored as a 1D
+    numpy array, with one element per ``space`` coordinate (here x and y).
+
+    We can also scale the two spatial dimensions by different factors.
+
+    >>> ds["position"] = scale(ds["position"], [10, 20], space_unit=None)
+    >>> print(ds["position"].attrs)
+    {'scale_factor': array([1., 2.])}
+
+    The second scale operation removed the ``space_unit`` attribute, restored
+    the x axis to its original scale, and scaled up the y axis to twice its
+    original size.
 
     """
-    if len(data.coords["space"]) == 2:
+    space_len = data.sizes["space"]
+    # Validate dimension names
+    if space_len == 2:
         validate_dims_coords(data, {"space": ["x", "y"]})
     else:
         validate_dims_coords(data, {"space": ["x", "y", "z"]})
 
-    if not np.isscalar(factor):
-        factor = np.array(factor).squeeze()
-        if factor.ndim != 1:
+    # Convert `factor` to a 1D array of length `space_len`
+    if np.isscalar(factor):
+        factor_1d = np.ones(space_len) * factor
+    else:
+        factor_1d = np.array(factor).squeeze()
+        if factor_1d.ndim != 1:
             raise ValueError(
                 "Factor must be an object that can be converted to a 1D numpy"
-                f" array, got {factor.ndim}D"
+                f" array, got {factor_1d.ndim}D"
             )
-        elif factor.shape != data.space.values.shape:
+        if factor_1d.shape[0] != space_len:
             raise ValueError(
-                f"Factor shape {factor.shape} does not match the shape "
+                f"Factor shape {factor_1d.shape} does not match the shape "
                 f"of the space dimension {data.space.values.shape}"
             )
-        else:
-            factor_dims = [1] * data.ndim  # 1s array matching data dimensions
-            factor_dims[data.get_axis_num("space")] = factor.shape[0]
-            factor = factor.reshape(factor_dims)
-    scaled_data = data * factor
 
-    scaled_data.attrs["scale_factor"] = factor
+    # Reshape factor for broadcasting
+    factor_dims = [1] * data.ndim
+    factor_dims[data.get_axis_num("space")] = space_len
+    factor_broadcast = factor_1d.reshape(factor_dims)
 
-    if space_unit is not None:
-        scaled_data.attrs["space_unit"] = space_unit
-    elif space_unit is None:
-        scaled_data.attrs.pop("space_unit", None)
+    # Scale the data and update attributes
+    scaled_data = data * factor_broadcast
+    _update_attrs_upon_scale(scaled_data, space_len, factor_1d, space_unit)
     return scaled_data
+
+
+def _update_attrs_upon_scale(
+    data: xr.DataArray,
+    space_len: int,
+    factor_1d: np.ndarray,
+    space_unit: str | None,
+) -> None:
+    """Update the 'scale_factor' and 'space_unit' attributes in-place.
+
+    This function modifies the attributes of the provided xarray.DataArray
+    in-place. It updates the ``scale_factor`` attribute by multiplying it with
+    the provided ``factor_1d``. If the ``space_unit`` is provided,
+    it updates or adds the 'space_unit' attribute.
+    If space_unit is None, it removes the 'space_unit' attribute.
+    """
+    # Update scale_factor
+    if "scale_factor" in data.attrs:
+        existing = np.array(data.attrs["scale_factor"], dtype=float).squeeze()
+
+        # We assume if it's stored, it is 1D array of same length as space
+        # dimension; if not, raise an error
+        if existing.ndim != 1:
+            raise ValueError(
+                "Expected existing 'scale_factor' to be 1D, found "
+                f"{existing.ndim}D instead."
+            )
+        if existing.shape[0] != space_len:
+            raise ValueError(
+                "Existing scale_factor length does not match current "
+                f"'space' dimension ({existing.shape[0]} != {space_len})."
+            )
+        new_scale_factor = existing * factor_1d
+    else:
+        new_scale_factor = factor_1d
+
+    data.attrs["scale_factor"] = new_scale_factor
+
+    # Update space_unit
+    if space_unit is not None:
+        data.attrs["space_unit"] = space_unit
+    else:
+        data.attrs.pop("space_unit", None)
