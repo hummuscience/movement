@@ -46,11 +46,6 @@ def scale(
       ``scale_factor`` attribute, the new scaling factor is multiplied with
       the existing one.
 
-    This scaling factor is stored as the output array's ``scale_factor``
-    attribute as a 1D array of the same length as the ``space``
-    dimension. If the input data already has a ``scale_factor``
-    attribute, the new scale factor is multiplied with the existing one.
-
     Examples
     --------
     Let's imagine a camera viewing a 2D plane from the top, with an
